@@ -174,35 +174,6 @@ else
   fail_with_message "Docker build failed"
 fi
 
-if [[ "${getdigest}" == "true" ]] ; then
-  echo "Exporting image digest"
-
-  # Export image digest
-  first_tag=""
-  for item in "${tagsflags[@]}"; do
-    if [[ "$item" != "--tag" ]]; then
-      first_tag="$item"
-      break
-    fi
-  done
-
-  if [[ -n "$first_tag" ]]; then
-    image_digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$first_tag")
-    if [[ -n "$image_digest" ]]; then
-      echo "Image Digest: $image_digest"
-      buildkite-agent meta-data set "docker-image-digest" "$image_digest"
-      export DBBP_IMAGE_DIGEST="$image_digest"
-      echo "Digest has been stored in DBBP_IMAGE_DIGEST environment variable"
-      echo "Digest has been stored as buildkite meta-data with key 'docker-image-digest'"
-      display_success "Image digest exported: \`${image_digest}\`"
-    else
-      echo "⚠️ Could not determine image digest for tag \`${first_tag}\`" >&2
-    fi
-  else
-    echo "⚠️ Could not determine the first tag to inspect for image digest." >&2
-  fi
-fi
-
 # Push
 ######
 
@@ -212,11 +183,50 @@ if [[ "${push}" == "true" ]] ; then
       continue
     fi
     docker push "${tag}"
-    status=$?
-    if [[ $status -eq 0 ]] ; then
+    pushstatus=$?
+    if [[ $pushstatus -eq 0 ]] ; then
       display_success "Docker push succeeded for tag \`${tag}\`"
     else
       fail_with_message "Docker push failed for tag \`${tag}\`"
     fi
   done
+fi
+
+# Export image digest
+#####################
+
+if [[ "${getdigest}" == "true" ]]; then
+  # Only proceed if we either didn't push, or we pushed and it was successful
+  if [[ "${push}" != "true" ]] || [[ ${pushstatus:-1} -eq 0 ]]; then
+    echo "Exporting image digest"
+
+    first_tag=""
+    for item in "${tagsflags[@]}"; do
+      if [[ "$item" != "--tag" ]]; then
+        first_tag="$item"
+        break
+      fi
+    done
+
+    echo "First tag: $first_tag"
+    
+    if [[ -n "$first_tag" ]]; then
+      docker inspect "${first_tag}"
+      image_digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${first_tag}")
+      if [[ -n "$image_digest" ]]; then
+        echo "Image Digest: $image_digest"
+        buildkite-agent meta-data set "docker-image-digest" "$image_digest"
+        export DBBP_IMAGE_DIGEST="$image_digest"
+        echo "Digest has been stored in DBBP_IMAGE_DIGEST environment variable"
+        echo "Digest has been stored as buildkite meta-data with key 'docker-image-digest'"
+        display_success "Image digest exported: \`${image_digest}\`"
+      else
+        echo "⚠️ Could not determine image digest for tag \`${first_tag}\`" >&2
+      fi
+    else
+      echo "⚠️ Could not determine the first tag to inspect for image digest." >&2
+    fi
+  else
+    echo "⚠️ Skipping digest export as push failed" >&2
+  fi
 fi
